@@ -1,10 +1,13 @@
 from datetime import date
 
-from sqlalchemy import Date, Enum, ForeignKey, String, UniqueConstraint
+from sqlalchemy import BigInteger, Date, Enum, ForeignKey, Integer, String, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from .database import Base
 from .schemas import ApplicationStatus
+
+
+EpochSeconds = BigInteger().with_variant(Integer(), "sqlite")
 
 
 class User(Base):
@@ -22,14 +25,14 @@ class AuthSession(Base):
 
     token_hash: Mapped[str] = mapped_column(primary_key=True)
     user_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
-    expires_at: Mapped[int] = mapped_column(index=True)
+    expires_at: Mapped[int] = mapped_column(EpochSeconds, index=True)
 
 
 class AuthRateLimit(Base):
     __tablename__ = "auth_rate_limits"
 
     key: Mapped[str] = mapped_column(primary_key=True)
-    expires_at: Mapped[int] = mapped_column(index=True)
+    expires_at: Mapped[int] = mapped_column(EpochSeconds, index=True)
     attempts: Mapped[int]
 
 

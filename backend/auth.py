@@ -13,14 +13,14 @@ from argon2.low_level import Type
 from fastapi import APIRouter, Depends, FastAPI, HTTPException, Request, Response
 from pydantic import BaseModel, ConfigDict, EmailStr, StringConstraints, field_validator
 from sqlalchemy import delete, select
-from sqlalchemy.dialects.sqlite import insert
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from .database import get_session
+from .database import conflict_insert, get_session
 from .models import AuthRateLimit, AuthSession, User
 
 DatabaseSession = Annotated[Session, Depends(get_session)]
+LOOPBACK_HOSTS = {"localhost", "127.0.0.1", "::1"}
 DEFAULT_ORIGINS = [
     f"http://{host}:{port}"
     for host in ("localhost", "127.0.0.1")
@@ -33,6 +33,10 @@ COOKIE_NAME = "interntrack_session"
 TOKEN_PATTERN = re.compile(r"[A-Za-z0-9_-]{43}")
 passwords = PasswordHasher(type=Type.ID)
 DUMMY_PASSWORD_HASH = passwords.hash(secrets.token_urlsafe(32))
+
+
+def is_loopback_http(scheme: str, hostname: str | None) -> bool:
+    return scheme == "http" and hostname in LOOPBACK_HOSTS
 
 
 class Credentials(BaseModel):
@@ -48,7 +52,7 @@ class Credentials(BaseModel):
 
 
 class Registration(Credentials):
-    name: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=100)]
+    name: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=100, pattern=r"^[^\x00]+$")]
     password: Annotated[str, StringConstraints(min_length=15, max_length=128)]
 
 
@@ -79,6 +83,11 @@ def configure_auth(app: FastAPI) -> None:
     if secure not in ("true", "false"):
         raise ValueError("AUTH_COOKIE_SECURE must be true or false.")
     app.state.secure_cookie = secure == "true"
+    if not app.state.secure_cookie and any(
+        not is_loopback_http(parts.scheme, parts.hostname)
+        for parts in map(urlsplit, origins)
+    ):
+        raise ValueError("AUTH_COOKIE_SECURE=false requires loopback HTTP origins.")
     app.state.session_cookie = f"__Host-{COOKIE_NAME}" if app.state.secure_cookie else COOKIE_NAME
 
 
@@ -89,6 +98,12 @@ def require_csrf(request: Request) -> None:
         or request.headers.get(CSRF_HEADER) != "1"
     ):
         raise HTTPException(403, "Request could not be verified. Reload the page and try again.")
+    if not session_cookie_allowed(request):
+        raise HTTPException(403, "Local HTTP sessions require a loopback API URL.")
+
+
+def session_cookie_allowed(request: Request) -> bool:
+    return request.app.state.secure_cookie or is_loopback_http(request.url.scheme, request.url.hostname)
 
 
 def digest(value: str) -> str:
@@ -96,19 +111,23 @@ def digest(value: str) -> str:
 
 
 def session_key(request: Request) -> str | None:
+    if not session_cookie_allowed(request):
+        return None
     token = request.cookies.get(request.app.state.session_cookie)
     return digest(token) if token and TOKEN_PATTERN.fullmatch(token) else None
 
 
-def current_user(request: Request, response: Response, db: DatabaseSession) -> User:
+def current_user(request: Request, response: Response) -> User:
     key = session_key(request)
     user = None
     if key:
-        user = db.scalar(
-            select(User).join(AuthSession, AuthSession.user_id == User.id).where(
-                AuthSession.token_hash == key, AuthSession.expires_at > int(time.time()),
+        # Release the connection before slow operations such as PDF extraction or Gemini calls.
+        with Session(request.app.state.engine) as db:
+            user = db.scalar(
+                select(User).join(AuthSession, AuthSession.user_id == User.id).where(
+                    AuthSession.token_hash == key, AuthSession.expires_at > int(time.time()),
+                )
             )
-        )
     if user is None:
         raise HTTPException(401, "Sign in to continue.", headers={"Cache-Control": "no-store"})
     require_csrf(request)
@@ -122,9 +141,9 @@ CurrentUser = Annotated[User, Depends(current_user)]
 def take_attempt(db: Session, key: str, limit: int) -> None:
     now = int(time.time())
     expires_at = now - now % RATE_WINDOW_SECONDS + RATE_WINDOW_SECONDS
-    # The SQLite upsert enforces the limit across processes and concurrent requests.
+    # The database upsert enforces the limit across processes and concurrent requests.
     db.execute(delete(AuthRateLimit).where(AuthRateLimit.expires_at <= now))
-    attempt = insert(AuthRateLimit).values(key=key, expires_at=expires_at, attempts=1)
+    attempt = conflict_insert(db, AuthRateLimit).values(key=key, expires_at=expires_at, attempts=1)
     count = db.scalar(
         attempt.on_conflict_do_update(
             index_elements=[AuthRateLimit.key],

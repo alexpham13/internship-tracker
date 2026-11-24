@@ -3,6 +3,7 @@ import tempfile
 import time
 import unittest
 from contextlib import closing
+from http.cookies import SimpleCookie
 from pathlib import Path
 
 from sqlalchemy import select, update
@@ -27,17 +28,21 @@ class AuthTests(unittest.TestCase):
         response = register(self.client, "Owner@EXAMPLE.COM", " Test Owner ")
         account = response.json()
         self.assertEqual(account, {"id": account["id"], "name": "Test Owner", "legacy_access": False})
-        attributes = response.headers["set-cookie"]
-        for value in ("__Host-", "HttpOnly", "Secure", "Path=/", "SameSite=lax", f"Max-Age={SESSION_SECONDS}"):
-            self.assertIn(value, attributes)
-        self.assertNotIn("Domain=", attributes)
+        self.assertTrue(self.cookie.startswith("__Host-"))
+        cookie = SimpleCookie(response.headers["set-cookie"])[self.cookie]
+        self.assertTrue(cookie["httponly"])
+        self.assertTrue(cookie["secure"])
+        self.assertEqual(cookie["path"], "/")
+        self.assertEqual(cookie["samesite"], "lax")
+        self.assertEqual(cookie["max-age"], str(SESSION_SECONDS))
+        self.assertFalse(cookie["domain"])
         token = self.client.cookies[self.cookie]
         with Session(self.app.state.engine) as db:
             user = db.get(User, account["id"])
             self.assertEqual(user.email, "owner@example.com")
             self.assertTrue(user.password_hash.startswith("$argon2id$"))
             self.assertNotIn(PASSWORD, user.password_hash)
-            self.assertEqual(db.scalar(select(AuthSession.token_hash)), digest(token))
+            self.assertTrue(db.scalar(select(AuthSession.token_hash)) == digest(token))
         self.assertEqual(self.client.get("/auth/me").json(), account)
         duplicate = self.client.post("/auth/register", json={
             "email": "owner@example.com", "name": "Other", "password": PASSWORD,
@@ -54,15 +59,57 @@ class AuthTests(unittest.TestCase):
         response = self.client.post("/auth/login", json={"email": "OWNER@example.com", "password": PASSWORD})
         self.assertEqual(response.status_code, 200)
         fresh = self.client.cookies[self.cookie]
-        self.assertNotEqual(stale, fresh)
+        self.assertTrue(stale != fresh)
         with closing(client_for(self.app)) as replay:
             replay.cookies.set(self.cookie, stale)
             self.assertEqual(replay.get("/auth/me").status_code, 401)
         logout = self.client.post("/auth/logout")
         self.assertEqual(logout.status_code, 204)
-        self.assertIn("Max-Age=0", logout.headers["set-cookie"])
+        self.assertEqual(SimpleCookie(logout.headers["set-cookie"])[self.cookie]["max-age"], "0")
         self.client.cookies.set(self.cookie, fresh)
         self.assertEqual(self.client.get("/auth/me").status_code, 401)
+
+    def test_local_http_login_persists_across_backend_restart(self):
+        register(self.client)
+        database = self.app.state.engine.url
+        with client_for(self.app, base_url="http://localhost:8000") as secure_http:
+            self.assertEqual(secure_http.post("/auth/login", json={
+                "email": "owner@example.com", "password": PASSWORD,
+            }).status_code, 200)
+            self.assertEqual(secure_http.get("/applications").status_code, 401)
+
+        app = app_for(database, secure=False)
+        with client_for(app, base_url="http://localhost:8000") as local:
+            login = local.post("/auth/login", json={"email": "owner@example.com", "password": PASSWORD})
+            self.assertEqual(login.status_code, 200)
+            self.assertEqual(app.state.session_cookie, "interntrack_session")
+            cookie = SimpleCookie(login.headers["set-cookie"])[app.state.session_cookie]
+            self.assertFalse(cookie["secure"])
+            self.assertFalse(cookie["domain"])
+            self.assertTrue(cookie["httponly"])
+            self.assertEqual(cookie["path"], "/")
+            self.assertEqual(cookie["samesite"], "lax")
+            self.assertEqual(local.post("/applications", json=APPLICATION).status_code, 201)
+
+        with client_for(app_for(database, secure=False), base_url="http://localhost:8000") as restarted:
+            restarted.cookies.update(local.cookies)
+            self.assertEqual(restarted.get("/auth/me").status_code, 200)
+            applications = restarted.get("/applications")
+            self.assertEqual(applications.status_code, 200)
+            self.assertEqual(len(applications.json()), 1)
+            self.assertEqual(restarted.post("/auth/logout").status_code, 204)
+            self.assertFalse(app.state.session_cookie in restarted.cookies)
+            restarted.cookies.update(local.cookies)
+            self.assertEqual(restarted.get("/applications").status_code, 401)
+
+    def test_insecure_sessions_require_loopback_http(self):
+        database = self.app.state.engine.url
+        with self.assertRaisesRegex(ValueError, "requires loopback HTTP origins"):
+            app_for(database, secure=False, origins=["https://tracker.example.com"])
+        with client_for(app_for(database, secure=False), base_url="http://tracker.example.com") as remote:
+            response = remote.post("/auth/login", json={"email": "owner@example.com", "password": PASSWORD})
+            self.assertEqual(response.status_code, 403)
+            self.assertNotIn("set-cookie", response.headers.keys())
 
     def test_expired_session_rejected_even_when_cookie_is_still_sent(self):
         register(self.client)
@@ -109,6 +156,7 @@ class AuthTests(unittest.TestCase):
     def test_input_validation_does_not_echo_passwords(self):
         for fields in (
             {"name": " ", "email": "owner@example.com", "password": PASSWORD},
+            {"name": "Owner\x00Name", "email": "owner@example.com", "password": PASSWORD},
             {"name": "Owner", "email": "not-an-email", "password": PASSWORD},
             {"name": "Owner", "email": "owner@example.com", "password": "short-private"},
             {"name": "Owner", "email": "owner@example.com", "password": PASSWORD, "legacy_access": True},

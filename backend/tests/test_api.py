@@ -48,6 +48,7 @@ class APITests(unittest.TestCase):
     def test_validation(self):
         for field, value in [
             ("company", "  "),
+            ("company", "Company\x00Name"),
             ("status", "Pending"),
             ("dateApplied", "2026-02-30"),
             ("dateApplied", 0),

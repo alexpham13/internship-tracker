@@ -11,8 +11,7 @@ from fastapi.exception_handlers import request_validation_exception_handler
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from sqlalchemy import case, func, select, text
-from sqlalchemy.dialects.sqlite import insert
+from sqlalchemy import URL, case, func, select, text
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
@@ -21,7 +20,7 @@ from .auth import (
     router as auth_router,
 )
 from .cover_letter import generate_cover_letter, router as cover_letter_router
-from .database import database_path, make_engine
+from .database import conflict_insert, make_engine
 from .migrations import initialize_schema
 from .models import Application, ImportedApplication
 from .resume_analysis import analyze_resume, router as resume_analysis_router
@@ -38,10 +37,10 @@ from .schemas import (
 MAX_RESUME_SIZE = 5 * 1024 * 1024
 
 
-def create_app(path: Path | None = None) -> FastAPI:
+def create_app(path: Path | str | URL | None = None) -> FastAPI:
     @asynccontextmanager
     async def lifespan(app: FastAPI):
-        engine = make_engine(path if path is not None else database_path())
+        engine = make_engine(path)
         try:
             initialize_schema(engine)
             app.state.engine = engine
@@ -131,16 +130,17 @@ def create_app(path: Path | None = None) -> FastAPI:
     @app.post("/applications/import")
     def import_applications(batch: ApplicationImport, db: DatabaseSession, user: CurrentUser) -> ImportResult:
         imported = 0
-        for record in batch.applications:
+        # Consistent lock order prevents overlapping PostgreSQL imports from deadlocking.
+        for record in sorted(batch.applications, key=lambda item: item.id):
             claimed_id = db.scalar(
-                insert(ImportedApplication).values(id=record.id, user_id=user.id)
+                conflict_insert(db, ImportedApplication).values(id=record.id, user_id=user.id)
                 .on_conflict_do_nothing(index_elements=["user_id", "id"])
                 .returning(ImportedApplication.id)
             )
             if claimed_id is None:
                 continue
             inserted_id = db.scalar(
-                insert(Application).values(user_id=user.id, **record.model_dump())
+                conflict_insert(db, Application).values(user_id=user.id, **record.model_dump())
                 .on_conflict_do_nothing(index_elements=["user_id", "id"])
                 .returning(Application.id)
             )

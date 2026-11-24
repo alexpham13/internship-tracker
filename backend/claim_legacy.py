@@ -1,17 +1,17 @@
 import argparse
 
 from email_validator import EmailNotValidError, validate_email
-from sqlalchemy import select, update
+from sqlalchemy import Engine, select, update
 from sqlalchemy.exc import IntegrityError
 
-from .database import database_path, make_engine
+from .database import lock_schema, make_engine
 from .migrations import initialize_schema
 from .models import Application, ImportedApplication, User
 
 
-def assign_legacy(engine, email: str) -> None:
+def assign_legacy(engine: Engine, email: str) -> None:
     with engine.begin() as connection:
-        connection.exec_driver_sql("BEGIN IMMEDIATE")
+        lock_schema(connection)
         user_id = connection.scalar(select(User.id).where(User.email == email))
         if user_id is None:
             raise ValueError("Register the intended account before assigning legacy records.")
@@ -24,14 +24,14 @@ def assign_legacy(engine, email: str) -> None:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Assign legacy SQLite and browser records to one account.")
+    parser = argparse.ArgumentParser(description="Assign legacy database and browser records to one account.")
     parser.add_argument("email", help="Email of the intended, already registered owner")
     args = parser.parse_args()
     try:
         email = validate_email(args.email, check_deliverability=False).normalized.casefold()
     except EmailNotValidError:
         parser.error("Enter a valid email address.")
-    engine = make_engine(database_path())
+    engine = make_engine()
     try:
         initialize_schema(engine)
         assign_legacy(engine, email)

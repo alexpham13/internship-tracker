@@ -44,7 +44,7 @@ export function Sidebar({ section, onNavigate, accountName, signingOut, onSignOu
       </nav>
       <div className="sidebar-footer">
         <span className="storage-icon"><HardDrive size={17} /></span>
-        <div><strong>Local workspace</strong><p>Saved in SQLite</p></div>
+        <div><strong>Workspace storage</strong><p>Saved to database</p></div>
       </div>
     </aside>
   )

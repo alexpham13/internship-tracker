@@ -235,7 +235,7 @@ function Workspace({ account, onSignOut }: { account: Account; onSignOut: () => 
         <header className="topbar">
           <div><BriefcaseBusiness size={17} /> <span>Workspace</span><span className="breadcrumb-slash">/</span><strong>{section}</strong></div>
           <span className="topbar-storage" data-error={!!loadError}><span />
-            {loading ? 'Connecting…' : loadError ? 'API unavailable' : 'Local database'}
+            {loading ? 'Connecting…' : loadError ? 'API unavailable' : 'Database connected'}
           </span>
         </header>
         <main className="workspace">
@@ -280,7 +280,7 @@ function Workspace({ account, onSignOut }: { account: Account; onSignOut: () => 
           {section === 'AI Assistant' && <ResumeAssistant />}
           {section === 'Settings' && (
             <section className="info-panel import-panel"><HardDrive size={22} /><div>
-              <h2>Application storage</h2><p>Your applications are saved in the local SQLite database.</p>
+              <h2>Application storage</h2><p>Your applications are saved in the workspace database.</p>
               {legacyApplications.length > 0 && <>
                 <p>{legacyApplications.length} {legacyApplications.length === 1 ? 'application is' : 'applications are'} available to import from this browser.</p>
                 <button type="button" className="button button-secondary" onClick={importApplications} disabled={importing || loading}>

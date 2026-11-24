@@ -14,7 +14,7 @@ class ApplicationStatus(StrEnum):
     REJECTED = "Rejected"
 
 
-NonBlank = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
+NonBlank = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, pattern=r"^[^\x00]+$")]
 ApplicationId = Annotated[str, StringConstraints(pattern=r"^[a-zA-Z0-9_-]{1,128}$")]
 
 
