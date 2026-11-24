@@ -1,0 +1,14 @@
+**
+!alembic.ini
+!backend/
+backend/**
+!backend/*.py
+!backend/requirements.txt
+!backend/docker-entrypoint.sh
+!backend/alembic/
+backend/alembic/**
+!backend/alembic/env.py
+!backend/alembic/script.py.mako
+!backend/alembic/versions/
+backend/alembic/versions/**
+!backend/alembic/versions/*.py

@@ -2,6 +2,33 @@
 
 A local internship tracker with a React and TypeScript frontend and a FastAPI backend.
 
+## Run with Docker Compose
+
+Start Docker with the Compose plugin, then run these commands from the repository root.
+
+```sh
+(umask 077 && cp -n .env.docker.example .env.docker)
+```
+
+Set a strong, unique `POSTGRES_PASSWORD` in the ignored `.env.docker` file. Set `GEMINI_API_KEY` there if you want resume analysis and cover letter generation. Compose injects these values at runtime. The frontend build uses the relative `/api` URL and receives neither value.
+
+```sh
+docker compose --env-file .env.docker up --build --detach --wait
+docker compose --env-file .env.docker ps
+```
+
+Open [http://localhost:8080](http://localhost:8080) or [http://127.0.0.1:8080](http://127.0.0.1:8080) and create an account. The example explicitly enables loopback HTTP cookies, including for Safari, and trusts both exact origins. Use the same hostname throughout a session because each hostname has its own cookie. If port 8080 is occupied, change `INTERNTRACK_PORT` and both ports in `AUTH_ALLOWED_ORIGINS` before starting.
+
+If an existing `.env.docker` trusts only `http://localhost:8080`, registration from `http://127.0.0.1:8080` will return 403. Add the second origin to that file and apply the updated configuration with `docker compose --env-file .env.docker up --detach --no-deps --wait backend`.
+
+- Nginx serves the built React app and proxies `/api/*` to FastAPI on the private Compose network, stripping the `/api` prefix. It is the only service with a published port, bound to host loopback.
+- The non-root API container waits for PostgreSQL 16, runs `alembic upgrade head`, then starts Uvicorn. Nginx waits for the API's database health check and has its own check through the proxy.
+- PostgreSQL uses a project-scoped `postgres_data` volume. The stack starts with a separate database from existing PostgreSQL containers and SQLite files. Stopping it or running `docker compose --env-file .env.docker down` retains the volume. Changing the password in the env file after initialization requires changing the database role password as well.
+
+For an isolated test stack, use a distinct Compose project with `-p`, a separate private env file, and an unused frontend port. Update the test origin to match that port. Compose scopes the containers, networks, and database volume to the project.
+
+For deployment, put an HTTPS reverse proxy in front of the loopback Nginx port, preserve the public `Host` header, set `AUTH_ALLOWED_ORIGINS` to the exact public HTTPS origin, and set `AUTH_COOKIE_SECURE=true`. This keeps login and API requests same-origin with Secure session cookies. The bundled Nginx replaces forwarding headers with its direct peer address. If deploying behind an HTTPS proxy, configure Nginx to trust only that proxy for the original client address so IP rate limits remain per client.
+
 ## Run locally
 
 From the repository root, start the backend in one terminal. The commands use the existing virtual environment. On a fresh checkout, first run `python3 -m venv backend/.venv` with Python 3.11 or later.
