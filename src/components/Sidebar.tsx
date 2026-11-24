@@ -35,7 +35,7 @@ export function Sidebar({ section, onNavigate }: SidebarProps) {
       </nav>
       <div className="sidebar-footer">
         <span className="storage-icon"><HardDrive size={17} /></span>
-        <div><strong>Local workspace</strong><p>Saved in this browser</p></div>
+        <div><strong>Local workspace</strong><p>Saved in SQLite</p></div>
       </div>
     </aside>
   )

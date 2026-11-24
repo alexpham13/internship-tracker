@@ -15,7 +15,7 @@ export interface Application extends ApplicationFields {
   id: string
 }
 
-export const storageKey = 'interntrack-applications'
+const storageKey = 'interntrack-applications'
 
 function isApplication(value: unknown): value is Application {
   if (typeof value !== 'object' || value === null) return false
@@ -26,12 +26,29 @@ function isApplication(value: unknown): value is Application {
     statuses.some((status) => status === item.status)
 }
 
-export function readApplications(): Application[] {
+export function getLegacyApplications(importKey: string): Application[] {
+  if (hasImportedApplications(importKey)) return []
   try {
     const saved: unknown = JSON.parse(localStorage.getItem(storageKey) ?? '[]')
     return Array.isArray(saved) ? saved.filter(isApplication) : []
   } catch {
     return []
+  }
+}
+
+function hasImportedApplications(importKey: string) {
+  try {
+    return localStorage.getItem(importKey) === 'true'
+  } catch {
+    return false
+  }
+}
+
+export function markLegacyApplicationsImported(importKey: string) {
+  try {
+    localStorage.setItem(importKey, 'true')
+  } catch {
+    // The server records imported IDs, so retrying is still safe.
   }
 }
 

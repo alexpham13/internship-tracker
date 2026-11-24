@@ -264,3 +264,9 @@ tbody tr:hover { background: #f9faff; }
   .table-scroll:has(tbody:empty) { display: none; }
   .empty-state { min-height: 270px; border-top: 1px solid var(--line); }
 }
+
+.button:disabled, .icon-button:disabled { cursor: not-allowed; opacity: .65; }
+.button-primary:disabled:hover { background: var(--blue); }
+.import-panel { margin-bottom: 16px; }
+.import-panel .button { margin-top: 10px; }
+.dialog .storage-alert { margin: 0 22px 12px; }

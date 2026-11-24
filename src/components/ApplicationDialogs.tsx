@@ -6,10 +6,12 @@ interface DialogProps {
   title: string
   description: string
   onClose: () => void
+  busy: boolean
+  error: string
   children: ReactNode
 }
 
-function Dialog({ title, description, onClose, children }: DialogProps) {
+function Dialog({ title, description, onClose, busy, error, children }: DialogProps) {
   const dialog = useRef<HTMLDialogElement>(null)
   const titleId = useId()
   const descriptionId = useId()
@@ -29,8 +31,9 @@ function Dialog({ title, description, onClose, children }: DialogProps) {
       onCancel={(event) => { event.preventDefault(); onClose() }}>
       <header className="dialog-header">
         <div><h2 id={titleId}>{title}</h2><p id={descriptionId}>{description}</p></div>
-        <button type="button" className="icon-button" aria-label="Close dialog" onClick={onClose}><X size={20} /></button>
+        <button type="button" className="icon-button" aria-label="Close dialog" onClick={onClose} disabled={busy}><X size={20} /></button>
       </header>
+      {error && <p role="alert" className="storage-alert">{error}</p>}
       {children}
     </dialog>
   )
@@ -39,12 +42,15 @@ function Dialog({ title, description, onClose, children }: DialogProps) {
 interface ApplicationEditorProps {
   application?: Application
   onClose: () => void
-  onSave: (fields: ApplicationFields) => void
+  onSave: (fields: ApplicationFields) => Promise<void>
+  busy: boolean
+  error: string
 }
 
-export function ApplicationEditor({ application, onClose, onSave }: ApplicationEditorProps) {
+export function ApplicationEditor({ application, onClose, onSave, busy, error }: ApplicationEditorProps) {
   function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
+    if (busy) return
     const fields = new FormData(event.currentTarget)
     onSave({
       company: String(fields.get('company')).trim(),
@@ -57,9 +63,9 @@ export function ApplicationEditor({ application, onClose, onSave }: ApplicationE
 
   return (
     <Dialog title={application ? 'Edit application' : 'Add application'}
-      description="Enter the details for this internship." onClose={onClose}>
+      description="Enter the details for this internship." onClose={onClose} busy={busy} error={error}>
       <form onSubmit={submit}>
-        <div className="form-fields">
+        <fieldset className="form-fields" disabled={busy}>
           <label>Company<input name="company" placeholder="e.g. Acme" defaultValue={application?.company} required pattern=".*\S.*" autoFocus /></label>
           <label>Position<input name="position" placeholder="e.g. Software Engineering Intern" defaultValue={application?.position} required pattern=".*\S.*" /></label>
           <label>Location<input name="location" placeholder="e.g. Chicago, IL or Remote" defaultValue={application?.location} required pattern=".*\S.*" /></label>
@@ -69,10 +75,12 @@ export function ApplicationEditor({ application, onClose, onSave }: ApplicationE
               {statuses.map((value) => <option key={value}>{value}</option>)}
             </select></label>
           </div>
-        </div>
+        </fieldset>
         <footer className="dialog-actions">
-          <button type="button" className="button button-secondary" onClick={onClose}>Cancel</button>
-          <button type="submit" className="button button-primary">{application ? 'Save changes' : 'Add Application'}</button>
+          <button type="button" className="button button-secondary" onClick={onClose} disabled={busy}>Cancel</button>
+          <button type="submit" className="button button-primary" disabled={busy}>
+            {busy ? 'Saving…' : application ? 'Save changes' : 'Add Application'}
+          </button>
         </footer>
       </form>
     </Dialog>
@@ -82,16 +90,20 @@ export function ApplicationEditor({ application, onClose, onSave }: ApplicationE
 interface DeleteDialogProps {
   application: Application
   onClose: () => void
-  onConfirm: () => void
+  onConfirm: () => Promise<void>
+  busy: boolean
+  error: string
 }
 
-export function DeleteDialog({ application, onClose, onConfirm }: DeleteDialogProps) {
+export function DeleteDialog({ application, onClose, onConfirm, busy, error }: DeleteDialogProps) {
   return (
     <Dialog title="Delete application?" description={`Remove your application for ${application.position} at ${application.company}.`}
-      onClose={onClose}>
+      onClose={onClose} busy={busy} error={error}>
       <footer className="dialog-actions">
-        <button type="button" className="button button-secondary" onClick={onClose} autoFocus>Cancel</button>
-        <button type="button" className="button button-danger" onClick={onConfirm}>Delete application</button>
+        <button type="button" className="button button-secondary" onClick={onClose} disabled={busy} autoFocus>Cancel</button>
+        <button type="button" className="button button-danger" onClick={onConfirm} disabled={busy}>
+          {busy ? 'Deleting…' : 'Delete application'}
+        </button>
       </footer>
     </Dialog>
   )
