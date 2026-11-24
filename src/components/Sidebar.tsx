@@ -1,4 +1,4 @@
-import { BriefcaseBusiness, HardDrive, LayoutGrid, Settings, Sparkles } from 'lucide-react'
+import { BriefcaseBusiness, HardDrive, LayoutGrid, LogOut, Settings, Sparkles } from 'lucide-react'
 
 const sections = [
   { label: 'Dashboard', icon: LayoutGrid },
@@ -12,9 +12,12 @@ export type Section = (typeof sections)[number]['label']
 interface SidebarProps {
   section: Section
   onNavigate: (section: Section) => void
+  accountName: string
+  signingOut: boolean
+  onSignOut: () => void
 }
 
-export function Sidebar({ section, onNavigate }: SidebarProps) {
+export function Sidebar({ section, onNavigate, accountName, signingOut, onSignOut }: SidebarProps) {
   return (
     <aside className="sidebar">
       <div className="brand">
@@ -23,6 +26,12 @@ export function Sidebar({ section, onNavigate }: SidebarProps) {
           <div className="brand-name">InternTrack <span>AI</span></div>
           <p>Internship tracker</p>
         </div>
+      </div>
+      <div className="sidebar-account">
+        <span title={accountName}>{accountName}</span>
+        <button type="button" className="button button-secondary" disabled={signingOut} onClick={onSignOut}>
+          <LogOut size={15} aria-hidden="true" /> {signingOut ? 'Signing out…' : 'Sign out'}
+        </button>
       </div>
       <nav aria-label="Workspace" className="navigation">
         <p className="nav-label">Workspace</p>

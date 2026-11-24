@@ -3,9 +3,8 @@ import unittest
 from pathlib import Path
 from uuid import UUID
 
-from fastapi.testclient import TestClient
 
-from backend.main import create_app
+from backend.tests.auth_support import app_for, client_for, register
 
 
 APPLICATION = {
@@ -21,7 +20,8 @@ class APITests(unittest.TestCase):
     def setUp(self):
         directory = self.enterContext(tempfile.TemporaryDirectory())
         self.database = Path(directory) / "test.sqlite3"
-        self.client = self.enterContext(TestClient(create_app(self.database)))
+        self.client = self.enterContext(client_for(app_for(self.database)))
+        register(self.client)
 
     def test_crud_and_persistence(self):
         self.assertEqual(self.client.get("/applications").json(), [])
@@ -30,7 +30,8 @@ class APITests(unittest.TestCase):
         record = response.json()
         self.assertEqual(UUID(record["id"]).version, 4)
         self.assertEqual(record, {**APPLICATION, "company": "Acme", "id": record["id"]})
-        with TestClient(create_app(self.database)) as restarted:
+        with client_for(app_for(self.database)) as restarted:
+            restarted.cookies.update(self.client.cookies)
             self.assertEqual(restarted.get("/applications").json(), [record])
 
         url = f"/applications/{record['id']}"

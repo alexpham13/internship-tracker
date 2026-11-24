@@ -1,9 +1,11 @@
-import { BriefcaseBusiness, HardDrive, Plus, Sparkles } from 'lucide-react'
+import { BriefcaseBusiness, HardDrive, Plus } from 'lucide-react'
 import { useEffect, useState } from 'react'
-import { apiBaseUrl, applicationsApi } from './api'
+import { ApiError, applicationsApi, authApi, sessionChangedEvent, type Account } from './api'
 import { getLegacyApplications, markLegacyApplicationsImported, type Application, type ApplicationFields, type StatusFilter } from './applications'
 import { ApplicationEditor, DeleteDialog } from './components/ApplicationDialogs'
 import { ApplicationTable } from './components/ApplicationTable'
+import { AuthPage } from './components/AuthPage'
+import { ResumeAssistant } from './components/ResumeAssistant'
 import { Sidebar, type Section } from './components/Sidebar'
 import { Statistics } from './components/Statistics'
 
@@ -11,13 +13,105 @@ type DialogState =
   | { kind: 'add' }
   | { kind: 'edit' | 'delete'; application: Application }
 
-const importKey = `interntrack-imported:${apiBaseUrl}`
+const importKey = 'interntrack-imported:http://127.0.0.1:8000'
+const sessionSignal = 'interntrack-session-signal'
+
+type AuthState =
+  | { kind: 'checking' | 'anonymous' }
+  | { kind: 'signed-in'; account: Account }
+  | { kind: 'error'; message: string }
 
 function errorMessage(error: unknown) {
   return error instanceof Error ? error.message : 'An unexpected error occurred. Try again.'
 }
 
 function App() {
+  const [auth, setAuth] = useState<AuthState>({ kind: 'checking' })
+  const [check, setCheck] = useState(0)
+
+  useEffect(() => {
+    const controller = new AbortController()
+    authApi.me(controller.signal)
+      .then((account) => {
+        if (!controller.signal.aborted) {
+          if (window.location.pathname === '/login' || window.location.pathname === '/register') {
+            window.history.replaceState(null, '', '/')
+          }
+          setAuth({ kind: 'signed-in', account })
+        }
+      })
+      .catch((error: unknown) => {
+        if (controller.signal.aborted) return
+        setAuth(error instanceof ApiError && error.status === 401
+          ? { kind: 'anonymous' }
+          : { kind: 'error', message: errorMessage(error) })
+      })
+    return () => controller.abort()
+  }, [check])
+
+  useEffect(() => {
+    const sessionExpired = () => {
+      window.history.replaceState(null, '', '/login')
+      setAuth({ kind: 'anonymous' })
+    }
+    const sessionSwitched = (event: StorageEvent) => {
+      if (event.key !== sessionSignal) return
+      setAuth({ kind: 'checking' })
+      setCheck((value) => value + 1)
+    }
+    window.addEventListener(sessionChangedEvent, sessionExpired)
+    window.addEventListener('storage', sessionSwitched)
+    return () => {
+      window.removeEventListener(sessionChangedEvent, sessionExpired)
+      window.removeEventListener('storage', sessionSwitched)
+    }
+  }, [])
+
+  function signalOtherTabs() {
+    try {
+      localStorage.setItem(sessionSignal, crypto.randomUUID())
+    } catch {
+      // Sessions still work when browser storage is unavailable.
+    }
+  }
+
+  function signedIn(account: Account) {
+    window.history.replaceState(null, '', '/')
+    setAuth({ kind: 'signed-in', account })
+    signalOtherTabs()
+  }
+
+  function signedOut() {
+    window.history.replaceState(null, '', '/login')
+    setAuth({ kind: 'anonymous' })
+    signalOtherTabs()
+  }
+
+  if (auth.kind === 'signed-in') {
+    return <Workspace key={auth.account.id} account={auth.account} onSignOut={signedOut} />
+  }
+  if (auth.kind === 'anonymous') {
+    return <AuthPage registering={window.location.pathname === '/register'} onSignIn={signedIn} />
+  }
+  return (
+    <main className="auth-shell">
+      <div className="info-panel">
+        {auth.kind === 'checking' && <p role="status">Checking your session…</p>}
+        {auth.kind === 'error' && <div>
+          <p role="alert">{auth.message}</p>
+          <button type="button" className="button button-secondary" onClick={() => {
+            setAuth({ kind: 'checking' })
+            setCheck((value) => value + 1)
+          }}>Retry</button>
+        </div>}
+      </div>
+    </main>
+  )
+}
+
+function Workspace({ account, onSignOut }: { account: Account; onSignOut: () => void }) {
+  const [signingOut, setSigningOut] = useState(false)
+  const [signOutError, setSignOutError] = useState('')
   const [section, setSection] = useState<Section>('Dashboard')
   const [applications, setApplications] = useState<Application[]>([])
   const [loading, setLoading] = useState(true)
@@ -28,7 +122,7 @@ function App() {
   const [actionError, setActionError] = useState('')
   const [search, setSearch] = useState('')
   const [status, setStatus] = useState<StatusFilter>('All statuses')
-  const [legacyApplications, setLegacyApplications] = useState(() => getLegacyApplications(importKey))
+  const [legacyApplications, setLegacyApplications] = useState(() => account.legacy_access ? getLegacyApplications(importKey) : [])
   const [importing, setImporting] = useState(false)
   const [importError, setImportError] = useState('')
   const [importMessage, setImportMessage] = useState('')
@@ -49,6 +143,20 @@ function App() {
       })
     return () => controller.abort()
   }, [loadAttempt])
+
+  async function signOut() {
+    if (signingOut) return
+    setSigningOut(true)
+    setSignOutError('')
+    try {
+      await authApi.logout()
+      onSignOut()
+    } catch (error) {
+      setSignOutError(errorMessage(error))
+    } finally {
+      setSigningOut(false)
+    }
+  }
 
   function reloadApplications() {
     setLoading(true)
@@ -121,7 +229,8 @@ function App() {
 
   return (
     <div className="app-shell">
-      <Sidebar section={section} onNavigate={setSection} />
+      <Sidebar section={section} onNavigate={setSection} accountName={account.name}
+        signingOut={signingOut} onSignOut={() => void signOut()} />
       <div className="main-shell">
         <header className="topbar">
           <div><BriefcaseBusiness size={17} /> <span>Workspace</span><span className="breadcrumb-slash">/</span><strong>{section}</strong></div>
@@ -130,12 +239,14 @@ function App() {
           </span>
         </header>
         <main className="workspace">
+          {signOutError && <p className="storage-alert" role="alert">{signOutError}</p>}
           <header className="page-heading">
             <div>
               <h1>{section}</h1>
               {isTrackingView && <p>{section === 'Dashboard'
                 ? 'An overview of your internship search and application progress.'
                 : 'Manage every internship you’ve applied to.'}</p>}
+              {section === 'AI Assistant' && <p>Prepare your resume and the job description in one place.</p>}
             </div>
             {isTrackingView && <button type="button" className="button button-primary" onClick={openAdd} disabled={!canManage}>
               <Plus size={19} /> Add Application
@@ -166,11 +277,7 @@ function App() {
             onEdit={(application) => showDialog({ kind: 'edit', application })}
             onDelete={(application) => showDialog({ kind: 'delete', application })}
             search={search} onSearch={setSearch} status={status} onStatus={setStatus} />}
-          {section === 'AI Assistant' && (
-            <section className="info-panel"><Sparkles size={22} /><div>
-              <h2>AI Assistant is coming later</h2><p>You can manage your internship search from Applications.</p>
-            </div></section>
-          )}
+          {section === 'AI Assistant' && <ResumeAssistant />}
           {section === 'Settings' && (
             <section className="info-panel import-panel"><HardDrive size={22} /><div>
               <h2>Application storage</h2><p>Your applications are saved in the local SQLite database.</p>
