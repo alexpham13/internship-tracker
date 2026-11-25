@@ -159,6 +159,14 @@ Responses include every status beyond Applied. Interviews and Offers count appli
 
 ## Checks
 
+The [CI workflow](.github/workflows/ci.yml) runs on pushes to `main` and pull requests targeting `main`. The Actions tab shows three independent checks.
+
+- **Backend tests** runs the full Python suite on Python 3.12 with temporary SQLite databases and a disposable PostgreSQL 16 service. The PostgreSQL suite uses a fresh schema per test. Gemini calls are mocked.
+- **Frontend lint and build** installs from `package-lock.json` on Node 24, runs ESLint, and builds the production frontend.
+- **Compose validation and image builds** validates `compose.yaml` and builds the frontend and backend images. It uses a generated value for Compose interpolation and does not start the stack or publish images.
+
+CI caches pip downloads by requirements files and npm downloads by the lockfile. It needs no repository secrets, Gemini API key, or local env files.
+
 From the repository root:
 
 ```sh
